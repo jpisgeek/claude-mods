@@ -15,9 +15,15 @@ export type Run = {
   awaitingResume: boolean
 }
 
-export type Snapshot = {
-  /** the swamp repo at or above the session's directory; null outside one */
-  repoDir: string | null
+/** Where runs are read from: the local repo, or a `swamp serve` server. */
+export type Source = {
+  kind: 'repo' | 'server'
+  /** the repo directory, or the server URL */
+  target: string
+}
+
+/** One source's runs at its last read. */
+export type SourceSnapshot = Source & {
   /** newest first; kept from the last good read when a refresh fails */
   runs: Run[]
   checkedAt: number | null
@@ -25,8 +31,13 @@ export type Snapshot = {
   isRefreshing: boolean
 }
 
+export type Snapshot = {
+  /** the swamp repo at or above the session's directory, then the configured server; empty when neither */
+  sources: SourceSnapshot[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'swamp-watch': { snapshot: Snapshot }
+    'swamp-watch': { sources: Snapshot }
   }
 }

@@ -108,7 +108,7 @@ test('outside a swamp repo it stays silent and never runs swamp', async ($, on) 
   expect(seen.argv).toEqual([])
   expect(seen.opened).toEqual([])
   expect(seen.statuses.at(-1)).toBe(undefined)
-  expect(text).toBe('swamp-watch: no .swamp.yaml at or above this directory.')
+  expect(text).toBe('swamp-watch: no .swamp.yaml at or above this directory, and no server set in /config.')
 })
 
 test('swampPath is honoured', { options: { swampPath: '/opt/swamp/bin/swamp' } }, async ($, on) => {
@@ -139,7 +139,52 @@ test('the pane draws a failure with its reason and a Diagnose button', async ($,
       },
     })
     expect(await ui.find({ text: /step discover: no reason recorded/ })).toBeDefined()
-    expect(await ui.find({ type: 'Button', key: 'diagnose:truenas-baseline' })).toBeDefined()
+    expect(await ui.find({ type: 'Button', key: 'diagnose:repo:truenas-baseline' })).toBeDefined()
     expect(await ui.find({ type: 'Button', key: 'refresh' })).toBeDefined()
   }
+})
+
+const SERVER = 'http://127.0.0.1:9090'
+
+test('a server is read too, through --server, and each source is named', { options: { server: SERVER } }, async ($, on) => {
+  const seen = world(on)
+  const { text } = await $.command.run(SLASH_SWAMP)
+
+  expect(seen.argv).toEqual([
+    ['swamp', 'workflow', 'run', 'search', '--json', '--limit', '50'],
+    ['swamp', 'workflow', 'run', 'search', '--json', '--limit', '50', '--server', SERVER],
+  ])
+  expect(text).toBe('swamp lab ✓ 1 ok │ serve ✓ 1 ok')
+})
+
+test(
+  'outside a repo the server alone is read, with its token file',
+  { options: { server: SERVER, serverTokenFile: '/home/j/.swamp-token' } },
+  async ($, on) => {
+    const seen = world(on, '/home/j/elsewhere')
+    const { text } = await $.command.run(SLASH_SWAMP)
+
+    expect(seen.argv).toEqual([
+      ['swamp', 'workflow', 'run', 'search', '--json', '--limit', '50', '--server', SERVER, '--token-file', '/home/j/.swamp-token'],
+    ])
+    expect(seen.opened).toEqual(['swamp'])
+    expect(text).toBe('swamp serve ✓ 1 ok')
+  },
+)
+
+test("a server's failure toasts with its name", { options: { server: SERVER } }, async ($, on) => {
+  const seen = world(on, '/home/j/elsewhere')
+  await $.command.run(SLASH_SWAMP)
+  seen.reply.stdout = searchOutput('failed', 'r2')
+  await $.command.run(SLASH_SWAMP)
+
+  expect(seen.toasts).toEqual(['swamp serve: truenas-baseline failed at discover. /swamp for details'])
+})
+
+test('a server URL carrying credentials is refused without running swamp', { options: { server: 'http://u:p@host:9090' } }, async ($, on) => {
+  const seen = world(on, '/home/j/elsewhere')
+  const { text } = await $.command.run(SLASH_SWAMP)
+
+  expect(seen.argv).toEqual([])
+  expect(text).toBe('swamp serve server URL must not carry credentials; use serverTokenFile or swamp auth server-login')
 })

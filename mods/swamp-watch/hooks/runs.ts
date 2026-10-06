@@ -1,4 +1,4 @@
-import type { Run, Snapshot } from '../types'
+import type { Run, Source, SourceSnapshot } from '../types'
 
 const str = (v: unknown) => (typeof v === 'string' && v.length > 0 ? v : undefined)
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
@@ -43,19 +43,24 @@ export function parseRuns(stdout: string): Run[] {
 }
 
 /**
- * A failed swamp run in JSON mode writes `{ error, hint? }` to stderr; anything
- * else falls back to its first line of text.
+ * A failed swamp run in JSON mode writes `{ error, hint? }` to stderr, after a
+ * `Remote <url>` banner when it ran through a server; anything else falls back
+ * to its first line of text.
  */
 export function errorText(stderr: string, exitCode: number): string {
-  try {
-    const doc = JSON.parse(stderr) as { error?: unknown; hint?: unknown }
-    if (typeof doc.error === 'string') {
-      return firstLine(typeof doc.hint === 'string' ? `${doc.error} (${doc.hint})` : doc.error)
+  const plain = stderr.replace(/\u001b\[[0-9;]*m/g, '')
+  const start = plain.search(/^\s*\{/m)
+  if (start >= 0) {
+    try {
+      const doc = JSON.parse(plain.slice(start)) as { error?: unknown; hint?: unknown }
+      if (typeof doc.error === 'string') {
+        return firstLine(typeof doc.hint === 'string' ? `${doc.error} (${doc.hint})` : doc.error)
+      }
+    } catch {
+      // not JSON: fall through to plain text
     }
-  } catch {
-    // not JSON: fall through to plain text
   }
-  const line = firstLine(stderr.replace(/\u001b\[[0-9;]*m/g, ''))
+  const line = firstLine(plain)
 
   return line || `swamp exited ${exitCode}`
 }
@@ -112,16 +117,12 @@ export function took(ms: number | undefined): string {
   return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`
 }
 
-/**
- * The status line: latest run per workflow, failures named first.
- * Undefined outside a swamp repo, so the line disappears.
- */
-export function statusLine(snap: Snapshot, now: number): string | undefined {
-  if (snap.repoDir === null) return undefined
-  if (snap.runs.length === 0) {
-    return snap.error === null ? 'swamp · no workflow runs yet' : `swamp · ${snap.error}`
+/** One source's part of the status line: latest run per workflow, failures named first. */
+function summary(source: SourceSnapshot, now: number): string {
+  if (source.runs.length === 0) {
+    return source.error === null ? 'no workflow runs yet' : source.error
   }
-  const latest = latestPerWorkflow(snap.runs)
+  const latest = latestPerWorkflow(source.runs)
   const count = (kind: Kind) => latest.filter(run => kindOf(run) === kind)
   const failed = count('failed')
   const parts: string[] = []
@@ -136,9 +137,23 @@ export function statusLine(snap: Snapshot, now: number): string | undefined {
   if (active > 0) parts.push(`● ${active} running`)
   const ok = count('ok').length
   if (ok > 0) parts.push(`✓ ${ok} ok`)
-  if (snap.error !== null) parts.push('stale: last refresh failed')
+  if (source.error !== null) parts.push('stale: last refresh failed')
 
-  return `swamp ${parts.join(' · ')}`
+  return parts.join(' · ')
+}
+
+/**
+ * The status line. A lone local repo reads `swamp ✓ 4 ok`; with a server each
+ * source is named. Undefined with no source, so the line disappears.
+ */
+export function statusLine(sources: readonly SourceSnapshot[], now: number): string | undefined {
+  const [only] = sources
+  if (only === undefined) return undefined
+  if (sources.length === 1 && only.kind === 'repo') {
+    return only.runs.length === 0 ? `swamp · ${summary(only, now)}` : `swamp ${summary(only, now)}`
+  }
+
+  return `swamp ${sources.map(source => `${label(source)} ${summary(source, now)}`).join(' │ ')}`
 }
 
 export type Change = { kind: 'failed' | 'recovered'; run: Run }
@@ -177,14 +192,54 @@ export async function findRepo(cwd: string, isFile: (path: string) => Promise<bo
 
 export const basename = (dir: string) => dir.slice(dir.lastIndexOf('/') + 1) || dir
 
+/** A source's short name: the repo's directory name, or `serve`. */
+export const label = (source: Source) => (source.kind === 'repo' ? basename(source.target) : 'serve')
+
+/**
+ * Why a configured server URL is refused, or null when it is usable: swamp
+ * takes ws://, wss://, http:// or https://, and a token never rides in the URL.
+ */
+export function serverProblem(url: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return 'server is not a URL'
+  }
+  if (!['ws:', 'wss:', 'http:', 'https:'].includes(parsed.protocol)) {
+    return 'server must be a ws://, wss://, http:// or https:// URL'
+  }
+  if (parsed.username || parsed.password) {
+    return 'server URL must not carry credentials; use serverTokenFile or swamp auth server-login'
+  }
+
+  return null
+}
+
+/** The flags that point a swamp command at a source: none for the local repo. */
+export function remoteArgs(source: Source, tokenFile: string): string[] {
+  if (source.kind === 'repo') return []
+
+  return ['--server', source.target, ...(tokenFile ? ['--token-file', tokenFile] : [])]
+}
+
+/** The command that shows a workflow's latest summary report from its source. */
+export function reportCommand(run: Run, source: Source): string {
+  const server = source.kind === 'server' ? ` --server ${source.target}` : ''
+
+  return `swamp report get @swamp/workflow-summary --workflow ${run.workflowName}${server} --json`
+}
+
 /** The prompt the Diagnose button sends: read-only investigation first. */
-export function diagnosePrompt(run: Run): string {
+export function diagnosePrompt(run: Run, source: Source): string {
   const step = run.failedStep ? `, step \`${run.failedStep}\`` : ''
+  const server = source.kind === 'server' ? ` --server ${source.target}` : ''
+  const where = source.kind === 'server' ? ` on the swamp serve at ${source.target}` : ''
 
   return [
-    `The swamp workflow \`${run.workflowName}\` failed (run ${run.runId}${step}).`,
-    `Inspect \`swamp report get @swamp/workflow-summary --workflow ${run.workflowName} --json\``,
-    `and \`swamp workflow history logs ${run.runId}\`, then explain the cause and the fix.`,
+    `The swamp workflow \`${run.workflowName}\`${where} failed (run ${run.runId}${step}).`,
+    `Inspect \`${reportCommand(run, source)}\``,
+    `and \`swamp workflow history logs ${run.runId}${server}\`, then explain the cause and the fix.`,
     'Read only: do not change definitions or re-run anything until I say so.',
   ].join(' ')
 }
