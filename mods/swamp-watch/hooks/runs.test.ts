@@ -1,7 +1,18 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import type { Run, Snapshot } from '../types'
-import { ago, changes, errorText, findRepo, latestPerWorkflow, parseRuns, statusLine, took } from './runs'
+import type { Run, SourceSnapshot } from '../types'
+import {
+  ago,
+  changes,
+  diagnosePrompt,
+  errorText,
+  findRepo,
+  latestPerWorkflow,
+  parseRuns,
+  serverProblem,
+  statusLine,
+  took,
+} from './runs'
 
 const NOW = Date.parse('2026-10-06T12:00:00Z')
 const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString()
@@ -13,8 +24,9 @@ const run = (over: Partial<Run>): Run => ({
   awaitingResume: false,
   ...over,
 })
-const snap = (runs: Run[], over: Partial<Snapshot> = {}): Snapshot => ({
-  repoDir: '/lab',
+const snap = (runs: Run[], over: Partial<SourceSnapshot> = {}): SourceSnapshot => ({
+  kind: 'repo',
+  target: '/lab',
   runs,
   checkedAt: NOW,
   error: null,
@@ -63,6 +75,11 @@ describe('errorText', () => {
     expect(errorText('\n\u001b[31mError:\u001b[0m boom\nmore', 1)).toBe('Error: boom')
     expect(errorText('', 3)).toBe('swamp exited 3')
   })
+
+  test('reads the JSON error after the Remote banner a server run prints', () => {
+    const stderr = '\u001b[1m\u001b[33m     Remote\u001b[39m\u001b[22m   http://127.0.0.1:9090\n{\n  "error": "Authentication failed"\n}\n'
+    expect(errorText(stderr, 1)).toBe('Authentication failed')
+  })
 })
 
 describe('summaries', () => {
@@ -73,21 +90,29 @@ describe('summaries', () => {
 
   test('status line names failures first', () => {
     const line = statusLine(
-      snap([
+      [snap([
         run({ runId: '4', workflowName: 'truenas-baseline', status: 'failed', startedAt: at(120) }),
         run({ runId: '3', workflowName: 'netdata-sweep' }),
         run({ runId: '2', workflowName: 'nightly', status: 'running' }),
         run({ runId: '1', workflowName: 'approve-me', status: 'suspended' }),
-      ]),
+      ])],
       NOW,
     )
     expect(line).toBe('swamp ✗ 1 failed: truenas-baseline (2h ago) · ◐ 1 waiting · ● 1 running · ✓ 1 ok')
   })
 
   test('status line is empty outside a repo and says when it is stale', () => {
-    expect(statusLine(snap([], { repoDir: null }), NOW)).toBe(undefined)
-    expect(statusLine(snap([], { error: 'Not signed in' }), NOW)).toBe('swamp · Not signed in')
-    expect(statusLine(snap([run({})], { error: 'x' }), NOW)).toBe('swamp ✓ 1 ok · stale: last refresh failed')
+    expect(statusLine([], NOW)).toBe(undefined)
+    expect(statusLine([snap([], { error: 'Not signed in' })], NOW)).toBe('swamp · Not signed in')
+    expect(statusLine([snap([run({})], { error: 'x' })], NOW)).toBe('swamp ✓ 1 ok · stale: last refresh failed')
+  })
+
+  test('status line names each source once a server is watched', () => {
+    const server = snap([run({ status: 'failed', startedAt: at(120) })], { kind: 'server', target: 'http://127.0.0.1:9090' })
+    expect(statusLine([snap([run({})]), server], NOW)).toBe('swamp lab ✓ 1 ok │ serve ✗ 1 failed: truenas-baseline (2h ago)')
+    expect(statusLine([snap([], { kind: 'server', target: 'ws://h:9090', error: 'Authentication failed' })], NOW)).toBe(
+      'swamp serve Authentication failed',
+    )
   })
 
   test('times', () => {
@@ -128,5 +153,21 @@ describe('findRepo', () => {
 
   test('null when there is none', async () => {
     expect(await findRepo('/home/j/other', marker('/home/j/lab'))).toBe(null)
+  })
+})
+
+describe('servers', () => {
+  test('serverProblem accepts swamp serve URLs and refuses the rest', () => {
+    expect(serverProblem('http://127.0.0.1:9090')).toBe(null)
+    expect(serverProblem('wss://swamp.example.net')).toBe(null)
+    expect(serverProblem('ftp://h')).toBe('server must be a ws://, wss://, http:// or https:// URL')
+    expect(serverProblem('not a url')).toBe('server is not a URL')
+    expect(serverProblem('https://a:b@h')).toContain('must not carry credentials')
+  })
+
+  test('the Diagnose prompt points its commands at the server', () => {
+    const prompt = diagnosePrompt(run({ runId: 'r9', status: 'failed' }), { kind: 'server', target: 'http://127.0.0.1:9090' })
+    expect(prompt).toContain('--workflow truenas-baseline --server http://127.0.0.1:9090 --json')
+    expect(prompt).toContain('swamp workflow history logs r9 --server http://127.0.0.1:9090')
   })
 })

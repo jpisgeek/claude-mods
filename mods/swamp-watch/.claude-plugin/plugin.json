@@ -1,7 +1,7 @@
 {
   "name": "swamp-watch",
-  "version": "0.1.0",
-  "description": "Status line, pane and toasts for swamp workflow runs in the current repo",
+  "version": "0.2.0",
+  "description": "Status line, pane and toasts for swamp workflow runs in the current repo and a swamp serve server",
   "author": {
     "name": "jpisgeek"
   },
@@ -18,6 +18,18 @@
       "title": "Poll interval (seconds)",
       "description": "How often to re-read workflow runs; 30 at least",
       "default": 120
+    },
+    "server": {
+      "type": "string",
+      "title": "swamp serve URL",
+      "description": "A swamp serve server to watch as well, e.g. http://127.0.0.1:9090; empty to watch only the local repo",
+      "default": ""
+    },
+    "serverTokenFile": {
+      "type": "string",
+      "title": "Server token file",
+      "description": "Path to a file holding the server token; empty to use the credentials from swamp auth server-login",
+      "default": ""
     }
   }
 }
