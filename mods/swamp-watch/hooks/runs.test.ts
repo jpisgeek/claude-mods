@@ -9,6 +9,7 @@ import {
   findRepo,
   latestPerWorkflow,
   parseRuns,
+  redact,
   serverProblem,
   statusLine,
   took,
@@ -79,6 +80,20 @@ describe('errorText', () => {
   test('reads the JSON error after the Remote banner a server run prints', () => {
     const stderr = '\u001b[1m\u001b[33m     Remote\u001b[39m\u001b[22m   http://127.0.0.1:9090\n{\n  "error": "Authentication failed"\n}\n'
     expect(errorText(stderr, 1)).toBe('Authentication failed')
+  })
+
+  test('masks a server token swamp echoes back', () => {
+    const secret = 'ab12'.repeat(16)
+    expect(errorText(`{"error":"Invalid header value: \\"Bearer swamp-watch.${secret}\\""}`, 1)).toBe(
+      'Invalid header value: "Bearer <redacted>"',
+    )
+    expect(errorText(`token swamp-watch.${secret} rejected`, 1)).toBe('token swamp-watch.<redacted> rejected')
+  })
+
+  test('leaves ordinary text alone', () => {
+    expect(redact('run 39b3d1b1-11de-4d9e-b7ae-93d22ff1c8b3 failed at step v1.2')).toBe(
+      'run 39b3d1b1-11de-4d9e-b7ae-93d22ff1c8b3 failed at step v1.2',
+    )
   })
 })
 

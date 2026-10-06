@@ -45,7 +45,8 @@ export function parseRuns(stdout: string): Run[] {
 /**
  * A failed swamp run in JSON mode writes `{ error, hint? }` to stderr, after a
  * `Remote <url>` banner when it ran through a server; anything else falls back
- * to its first line of text.
+ * to its first line of text. Server tokens are masked, since swamp can echo a
+ * malformed one back in its error.
  */
 export function errorText(stderr: string, exitCode: number): string {
   const plain = stderr.replace(/\u001b\[[0-9;]*m/g, '')
@@ -65,8 +66,13 @@ export function errorText(stderr: string, exitCode: number): string {
   return line || `swamp exited ${exitCode}`
 }
 
+/** A server token is `<name>.<secret>`; keep the name, drop the secret. */
+export function redact(text: string): string {
+  return text.replace(/\b(Bearer\s+)[^\s"'\\]+/gi, '$1<redacted>').replace(/\b([\w-]+)\.[0-9a-f]{32,}\b/gi, '$1.<redacted>')
+}
+
 function firstLine(text: string): string {
-  const line = text.split('\n').map(l => l.trim()).find(l => l.length > 0) ?? ''
+  const line = redact(text.split('\n').map(l => l.trim()).find(l => l.length > 0) ?? '')
 
   return line.length > 160 ? `${line.slice(0, 157)}...` : line
 }
