@@ -1,6 +1,6 @@
 {
   "name": "swamp-watch",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Status line, pane and toasts for swamp workflow runs in the current repo and a swamp serve server",
   "author": {
     "name": "jpisgeek"
