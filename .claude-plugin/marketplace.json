@@ -1,0 +1,14 @@
+{
+  "name": "jpisgeek",
+  "owner": {
+    "name": "jpisgeek"
+  },
+  "description": "jpisgeek's Claude Code mods",
+  "plugins": [
+    {
+      "name": "swamp-watch",
+      "source": "./mods/swamp-watch",
+      "description": "Status line, pane and toasts for swamp workflow runs in the current repo"
+    }
+  ]
+}

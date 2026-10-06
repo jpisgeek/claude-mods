@@ -1,0 +1,23 @@
+{
+  "name": "swamp-watch",
+  "version": "0.1.0",
+  "description": "Status line, pane and toasts for swamp workflow runs in the current repo",
+  "author": {
+    "name": "jpisgeek"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "swampPath": {
+      "type": "string",
+      "title": "swamp binary",
+      "description": "Path to the swamp CLI, or its name on PATH",
+      "default": "swamp"
+    },
+    "pollSeconds": {
+      "type": "number",
+      "title": "Poll interval (seconds)",
+      "description": "How often to re-read workflow runs; 30 at least",
+      "default": 120
+    }
+  }
+}
